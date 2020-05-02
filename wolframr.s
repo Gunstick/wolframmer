@@ -1,6 +1,7 @@
 ; Wolfram rules player by Gunstick of ULM (c) GPL 2020 and for all eternity...
 ;this is the bootsector version for low rez
 ;save it from a: to b:
+; bug: need to preinit loop and jump in middle...
 
 def_version equ 10
 d0_for_mcp equ 0
@@ -83,7 +84,7 @@ buffer  ds.b    512
 
 ;        default 1
 
-        opt X+,D+
+        opt X-,D-
         output 'E:\PROGRAMS\X.PRG'
 
         ifeq def_version
@@ -152,22 +153,24 @@ cls:
         addq.w  #2,a1
         dbra    d0,cls
 
+        move.b #8,$ffff8800.w ; volume 0
+        move.b #7,$ffff8802.w ; 
 ; init screen with 1 pixel set
         movea.l $0000044e.w,a1  ;screenbase
   ; starting pattern
-        move.b #1,32000-80-160(a1)  ; pixel 1 line above so line below is for next generation
+;        move.b #1,32000-80-160(a1)  ; pixel 1 line above so line below is for next generation
         move.b #1,160*8+80(a1)  ; pixel 1 line above so line below is for next generation
-        move.b #1,160*8+80+2(a1)  ; pixel 1 line above so line below is for next generation
-        move.b #1,160*8+80+4(a1)  ; pixel 1 line above so line below is for next generation
-        move.b #1,160*8+80+6(a1)  ; pixel 1 line above so line below is for next generation
+;        move.b #1,160*8+80+2(a1)  ; pixel 1 line above so line below is for next generation
+;        move.b #1,160*8+80+4(a1)  ; pixel 1 line above so line below is for next generation
+;        move.b #1,160*8+80+6(a1)  ; pixel 1 line above so line below is for next generation
   ; where we do our business
-        lea 32000-160*2+6(a1),a0  ; second last line, 6 bytes in: first 32bits value
+;        lea 32000-160*2+6(a1),a0  ; second last line, 6 bytes in: first 32bits value
         lea 160*8+6(a1),a0  ; 9th line, 6 bytes in: first 32bits value
     ;    move.w #30,d5   ; we do rule 30
     ;    move.w #%00111100,d5   ; we do mirrored rule 30
    ;     move.w #$ff,d5   ; always on
         addq #1,d5   ; iterate through rules
-   not.w $ffff8240.w
+  ; not.w $ffff8240.w
 loop:
         ifeq debug
         addq.w  #1,gen
@@ -206,19 +209,26 @@ notset:
         addx.l d3,d3
         dbf d6,_32bitloop
         move.l d3,160(a0)   ; write line below
+        ;move.b #8,$ffff8800.w ; volume 0
+        ;move.b #0,$ffff8800.w ; tone 0
+        move.b d7,$ffff8800.w ; psg register 0-9
+        move.b d3,$ffff8802.w ; do 'sound'
         lea 16(a0),a0       ; not 8, as we do 2 columns of 16 pix at once
         dbf d7,_10columns
 ;  move.w #%11001111,4(a0)
         ; add.l #160,a0  ; next line
 
         ; vsync
+        ifeq 0
         movem.l d0-d7/a0-a6,-(sp)
         move.w #37,-(sp)
         trap #14
         addq.l #2,sp
         movem.l (sp)+,d0-d7/a0-a6
+        endc
 wait:
         cmpi.b  #$80,$fffffc02.w
+        cmpi.b  #$1,$fffffc02.w
         blo.s     exit
       lea 32000(a1),a2
       cmpa.l a2,a0
