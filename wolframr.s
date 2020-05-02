@@ -11,6 +11,7 @@ debug   set  10                  ;0=debug (+ generations in gen:)
 megafast set  10                  ;0=faster but not bootsector
 withcls set 10     ; 0=no clear screen
 ownscreen set 10   ; 0=use screen area in bss instead of default OS
+withsound set 10    ; 0=no sound
 
 ; principle:
 ; Screen is organized in 10 vertical stripes of 32 pixels
@@ -156,8 +157,10 @@ cls:
         dbra    d0,cls
         endc ; withcls
 
+      ifeq withsound
         move.b #8,$ffff8800.w ; volume 0
         move.b #7,$ffff8802.w ; 
+      endc
 ; init screen with 1 pixel set
         movea.l $0000044e.w,a1  ;screenbase
   ; starting pattern
@@ -182,7 +185,8 @@ loop:
 ; d1=value to the right
 ; d2=shifted out bits (masked to 3)
 ; d3=calculated output
-; d4=%111 (mask for d2=
+; d4=%111 (mask for d2)
+; d4=temp register
 ; d5=rule number, i.e. 30 ($1E, %00011110)
 ; d6=loop counter per column (32)
 ; d7=loop counter for line (10)
@@ -203,19 +207,25 @@ _32bitloop:
         add.l d1,d1   ; shift left
         addx.l d0,d0  ; get bit in
         addx.b d2,d2  ; accumulate 3 bits
-        and.b d4,d2   ; mask 3 bits
-        andi #%11101111,ccr  ; clear X
-        btst.l d2,d5  ; check if matches
-        beq.s notset
-        ori  #%00010000,ccr  ; set X
+        andi.b #%111,d2   ; mask 3 bits
+        ; code idea by Scarab
+        btst d2,d5    ; check if matches rule
+        sne d4        ; set d1 to ff if true
+        add.b d4,d4   ; move d1 value into X
+        ;andi #%11101111,ccr  ; clear X
+        ;btst.l d2,d5  ; check if matches rule
+        ;beq.s notset
+        ;ori  #%00010000,ccr  ; set X
 notset:
         addx.l d3,d3
         dbf d6,_32bitloop
         move.l d3,160(a0)   ; write line below
+      ifeq withsound
         ;move.b #8,$ffff8800.w ; volume 0
         ;move.b #0,$ffff8800.w ; tone 0
         move.b d7,$ffff8800.w ; psg register 0-9
         move.b d3,$ffff8802.w ; do 'sound'
+      endc
         lea 16(a0),a0       ; not 8, as we do 2 columns of 16 pix at once
         dbf d7,_10columns
 ;  move.w #%11001111,4(a0)
