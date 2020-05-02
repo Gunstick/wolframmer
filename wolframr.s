@@ -9,10 +9,8 @@ mcp_adr equ $00000500
 bootsector equ 10               ;0=code for boot (uses $60000-$60400)
 debug   set  10                  ;0=debug (+ generations in gen:)
 megafast set  10                  ;0=faster but not bootsector
-        ifeq bootsector
-debug   set 1
-megafast set 1
-
+withcls set 10     ; 0=no clear screen
+ownscreen set 10   ; 0=use screen area in bss instead of default OS
 
 ; principle:
 ; Screen is organized in 10 vertical stripes of 32 pixels
@@ -22,7 +20,12 @@ megafast set 1
 ; | 1st 16 pixels|| 2nd 16 pixels|| 3rd 16 pixels|| 4th 16 pixels|
 ;            $DDDDAAAA is the first 32bit value
 
+
+; some helper routine to make a boot sector
 ; Installe boot secteur
+        ifeq bootsector
+debug   set 1
+megafast set 1
         opt     x+
 
         move.l  #b,d0
@@ -79,49 +82,43 @@ Fin     clr.w   -(sp)
         section BSS
 buffer  ds.b    512
 
-        endc
+        endc    ; bootsector generator
 ;        >PART 'my sync'
 
 ;        default 1
 
         opt X-,D-
-        output 'E:\PROGRAMS\X.PRG'
-
-        ifeq def_version
-        opt X-,D-
-        default 3
-        output 'E:\PACK\X.BIN'
-        org $00002500
-        endc
 
         text
 x:
         ifne def_version
 
+        ifeq ownscreen
+    ; this could all go away if we just draw on the current screen!
         move.l  #screen,d0   ; here be grafics
         clr.b   d0    ; STf does not know about low byte
         move.l  d0,a0 
         move.w  #0,-(sp) ; mode 0=low
         pea     (a0) ; phys
         pea     (a0) ; log
-  move.w  #5,-(sp)  ; setscreen(log, phys, mode)
+        move.w  #5,-(sp)  ; setscreen(log, phys, mode)
         trap    #14     ; XBIOS
-  ; lea 12(sp),sp
+        lea 12(sp),sp
+        endc ; ownscreen
+
         pea     start(pc)
         move.w  #38,-(sp) ; supexec(start)
         trap    #14 ; XBIOS
-  ; lea 6(sp),sp
-        lea     18(sp),sp
+        lea 6(sp),sp
 
         clr.w   -(sp)  ; Pterm0()
         trap    #1  ; GEMDOS
         endc
 
 start:
-;        endpart
-;        PART 'main loop'
 a:
         pea     message(pc)
+      ifeq bootsector
         bra.s   bootcode
         dc.b "GK"
 gen:
@@ -133,25 +130,31 @@ bitpatt:
 topline:
         ds.b 8
 bootcode:
+      endc   ; bootsector
+
         move.w  #9,-(sp)  ; Cconws(message)
         trap    #1   ; GEMDOS
         addq.w  #6,sp
-        lea     loop(pc),a0
-;        base A0,loop
-        movea.w #$0777,a1
-        move.l  a1,$ffff8248.w
-        move.w  a1,$ffff8258.w
-;        clr.b   $ffff8260.w
-      move.b #30-1,d5    ; start with rule 30
+        ; set some colors.
+        ; background: color 0
+        ; left part of columns: color 9
+        ; right part of columns: color 1
+        ; text color: color 15
+        move.l #$00000777,$ffff8240.w   ; pal 0-1   (background,right columns)
+        move.l #$07770077,$ffff8250.w   ; pal 8-9   (left columns,ESC-b-9 text)
+      ; move.b #30-1,d5    ; start with rule 30
+      move.b #99-1,d5    ; start with rule 100
 restart:
+        ifeq withcls
         movea.l $0000044e.w,a1  ;screenbase
-        lea     -160-4(a1),a1
-        move.w  #21*200-1,d0
+;        lea     -160-4(a1),a1
+        move.w  #21*200-1-10,d0
 cls:
         move.w  #$ffff,(a1)+
         clr.l   (a1)+
         addq.w  #2,a1
         dbra    d0,cls
+        endc ; withcls
 
         move.b #8,$ffff8800.w ; volume 0
         move.b #7,$ffff8802.w ; 
@@ -239,7 +242,9 @@ wait:
 exit:
         rts
 message:
-        dc.b "Gunstick's Wolframmer  <BD> ULM 01.05.2020",0,"$"
+        dc.b $1b,"b9"   ; text color: 9
+        dc.b $1b,"E"    ; CLS
+        dc.b "Gunstick's Wolframmer  ",$BD," ULM 01.05.2020",0,"$"
 tables:
         dc.w 0
 initpos:
