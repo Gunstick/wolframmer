@@ -1,5 +1,5 @@
 ; Wolfram rules player by Gunstick of ULM (c) GPL 2020 and for all eternity...
-;this is the bootsector version for low rez
+;the bootsector version has not been tested
 ;save it from a: to b:
 ; bug: need to preinit loop and jump in middle...
 
@@ -8,10 +8,13 @@ d0_for_mcp equ 0
 mcp_adr equ $00000500
 bootsector equ 10               ;0=code for boot (uses $60000-$60400)
 debug   set  10                  ;0=debug (+ generations in gen:)
-megafast set  10                  ;0=faster but not bootsector
 withcls set 10     ; 0=no clear screen
 ownscreen set 10   ; 0=use screen area in bss instead of default OS
-withsound set 10    ; 0=no sound
+withsound set 10    ; 0=with sound, 10=no sound (needs 14 bytes)
+vsync set 10   ; 10=fast, no sync ; 0=vsync  (vsync changes from "digit" to "chiptune")
+withmsg set 10 ; 0=with text, 10=no text
+supexec set 10 ; 0=Supexec(xbios); 10=Super(gemdos) (2 bytes less)
+rndinit set 10 ; 0=start with rule 30 ; 10=use whatever start pattern is in d0.b ; 10=start with 30   (2 bytes less)
 
 ; principle:
 ; Screen is organized in 10 vertical stripes of 32 pixels
@@ -26,7 +29,6 @@ withsound set 10    ; 0=no sound
 ; Installe boot secteur
         ifeq bootsector
 debug   set 1
-megafast set 1
         opt     x+
 
         move.l  #b,d0
@@ -96,7 +98,8 @@ x:
 
         ifeq ownscreen
     ; this could all go away if we just draw on the current screen!
-        move.l  #screen,d0   ; here be grafics
+        lea screen(pc),a0
+        move.l  a0,d0   ; here be grafics
         clr.b   d0    ; STf does not know about low byte
         move.l  d0,a0 
         move.w  #0,-(sp) ; mode 0=low
@@ -107,18 +110,27 @@ x:
         lea 12(sp),sp
         endc ; ownscreen
 
+     ifeq supexec
         pea     start(pc)
         move.w  #38,-(sp) ; supexec(start)
         trap    #14 ; XBIOS
-        lea 6(sp),sp
+;        lea 6(sp),sp
+;        clr.w   -(sp)  ; Pterm0()
+;        trap    #1  ; GEMDOS
+     else
+        clr.l   -(sp)
+        move.w   #32,-(sp)  ; super
+        trap   #1    ; GEMDOS
+;        addq.l   #6,sp   ; needed?  
+     endc
 
-        clr.w   -(sp)  ; Pterm0()
-        trap    #1  ; GEMDOS
         endc
 
 start:
 a:
+      ifeq withmsg
         pea     message(pc)
+      endc
       ifeq bootsector
         bra.s   bootcode
         dc.b "GK"
@@ -132,19 +144,27 @@ topline:
         ds.b 8
 bootcode:
       endc   ; bootsector
-
+      ifeq withmsg
         move.w  #9,-(sp)  ; Cconws(message)
         trap    #1   ; GEMDOS
         addq.w  #6,sp
+      endc
         ; set some colors.
         ; background: color 0
         ; left part of columns: color 9
         ; right part of columns: color 1
         ; text color: color 15
-        move.l #$00000777,$ffff8240.w   ; pal 0-1   (background,right columns)
-        move.l #$07770077,$ffff8250.w   ; pal 8-9   (left columns,ESC-b-9 text)
+     ifeq withmsg
+        move.l #$00000777,$ffff8240.w   ; pal 0-1   (background,right columns)    #8
+        move.l #$07770077,$ffff8250.w   ; pal 8-9   (left columns,ESC-b-9 text)   #8
+     else
+         move.w $ffff8250.w,$ffff8242.w   ; pal 8->1   (left=right columns)    #6
+;        move.w #$0777,$ffff8250.w   ; pal 8   (left columns)   #6
+     endc
       ; move.b #30-1,d5    ; start with rule 30
-      move.b #99-1,d5    ; start with rule 100
+     ifeq rndinit
+      moveq #30,d5    ; start with rule 30
+     endc
 restart:
         ifeq withcls
         movea.l $0000044e.w,a1  ;screenbase
@@ -158,14 +178,20 @@ cls:
         endc ; withcls
 
       ifeq withsound
-        move.b #8,$ffff8800.w ; volume 0
-        move.b #7,$ffff8802.w ; 
+;        move.b #8,$ffff8800.w ; volume A
+;        move.b #7,$ffff8802.w ;  max
+       ifne vsync
+        lea $ffff8800.w,a6
+        move.w #$800,(a6)+
+        move.b #7,(a6)    ; init PSG with volume max for nasty digit
+       endc
       endc
 ; init screen with 1 pixel set
         movea.l $0000044e.w,a1  ;screenbase
   ; starting pattern
 ;        move.b #1,32000-80-160(a1)  ; pixel 1 line above so line below is for next generation
-        move.b #1,160*8+80(a1)  ; pixel 1 line above so line below is for next generation
+        ;move.b #%10001,160*8+80(a1)  ; pixel 1 line above so line below is for next generation
+        move.b d5,160*8+86(a1)  ; just use the rule number as starting seed (and notice that it's ignored)
 ;        move.b #1,160*8+80+2(a1)  ; pixel 1 line above so line below is for next generation
 ;        move.b #1,160*8+80+4(a1)  ; pixel 1 line above so line below is for next generation
 ;        move.b #1,160*8+80+6(a1)  ; pixel 1 line above so line below is for next generation
@@ -193,10 +219,10 @@ loop:
 ; a0=beginning of line+6, so first 32bit value is at 0(a0), next at 8(a0) until 72(a0)
 ; a1=pyhsbase
 ; let's first implement an "any rule" algorithm
-        moveq #%111,d4
+
 ; scan all bits of second last line
         move.l (a0),d0 ; get 32 bits at right edge
-        moveq #-3,d6   ; skip 2 bits at the start
+        moveq #-2,d6   ; skip 2 bits at the start
         ; we never set the outer bits, is this bad?
         ; get bit pattern of the 3 pixels above
         moveq #9,d7   ; treat 10 columns
@@ -223,8 +249,11 @@ notset:
       ifeq withsound
         ;move.b #8,$ffff8800.w ; volume 0
         ;move.b #0,$ffff8800.w ; tone 0
+       ifeq vsync
         move.b d7,$ffff8800.w ; psg register 0-9
         move.b d3,$ffff8802.w ; do 'sound'
+       endc
+        move.b d3,(a6) ; do 'sound'
       endc
         lea 16(a0),a0       ; not 8, as we do 2 columns of 16 pix at once
         dbf d7,_10columns
@@ -232,55 +261,41 @@ notset:
         ; add.l #160,a0  ; next line
 
         ; vsync
-        ifeq 0
+        ifeq vsync
         movem.l d0-d7/a0-a6,-(sp)
         move.w #37,-(sp)
         trap #14
         addq.l #2,sp
         movem.l (sp)+,d0-d7/a0-a6
         endc
-wait:
-        cmpi.b  #$80,$fffffc02.w
-        cmpi.b  #$1,$fffffc02.w
-        blo.s     exit
+
       lea 32000(a1),a2
       cmpa.l a2,a0
-      bgt restart
-        bra     loop            ; AND HERE IS THE BIG LOOP
+      bgt.s restart
+        cmpi.b  #$39,$fffffc02.w
+        bne.s     loop
+;        bra.s     loop            ; AND HERE IS THE BIG LOOP
 
 
 exit:
-        rts
+        rts     ; yeah, save 2 bytes, exit with bombs or something... 
+      ifeq withmsg
 message:
         dc.b $1b,"b9"   ; text color: 9
         dc.b $1b,"E"    ; CLS
-        dc.b "Gunstick's Wolframmer  ",$BD," ULM 01.05.2020",0,"$"
-tables:
-        dc.w 0
-initpos:
-        dc.w 100*160+38+64
-initlines:
-        dc.w 1
-;        dc.w 45
+        dc.b "Gunstick's Wolframmer ",$BD," ULM 01.05.2020"  ; 38 
+        dc.b 0
+      endc
+        ifeq bootsector
 checksum:
         ds.w  1
 b:
-
+        endc
 
 ;        endpart
         bss
 bss_start:                      ;here starts the bss
 ;        PART 'bss'
-        ds.w 4
-emptylines1:
-        ds.w 410                ;init to 1
-emptylines2:
-        ds.w 410                ;needs no init
-        ds.w 4
-lastline1:
-        ds.w 40+4            ;needs no init
-lastline2:
-        ds.w 40+4            ;needs no init
         ds.l    2*40+256
 screen:
         ds.l    202*40
