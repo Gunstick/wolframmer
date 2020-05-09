@@ -10,9 +10,9 @@ bootsector equ 10               ;0=code for boot (uses $60000-$60400)
 debug   set  10                  ;0=debug (+ generations in gen:)
 withcls set 10     ; 0=no clear screen
 ownscreen set 10   ; 0=use screen area in bss instead of default OS
-withsound set 10    ; 0=with sound, 10=no sound (needs 14 bytes)
+withsound set 0    ; 0=with sound, 10=no sound (needs 23 bytes)
 vsync set 10   ; 10=fast, no sync ; 0=vsync  (vsync changes from "digit" to "chiptune")
-withmsg set 10 ; 0=with text, 10=no text
+withmsg set 0 ; 0=with text, 10=no text
 supexec set 10 ; 0=Supexec(xbios); 10=Super(gemdos) (2 bytes less)
 rndinit set 10 ; 0=start with rule 30 ; 10=use whatever start pattern is in d0.b ; 10=start with 30   (2 bytes less)
 reverse set 10 ; 0 = reverse ; 10=incremantal  (same size)
@@ -162,11 +162,61 @@ bootcode:
          move.w $ffff8250.w,$ffff8242.w   ; pal 8->1   (left=right columns)    #6
 ;        move.w #$0777,$ffff8250.w   ; pal 8   (left columns)   #6
      endc
+
       ; move.b #30-1,d5    ; start with rule 30
      ifeq rndinit
       moveq #30,d5    ; start with rule 30
      endc
+      ifeq withsound
+;        move.b #8,$ffff8800.w ; volume A
+;        move.b #7,$ffff8802.w ;  max
+       moveq #-2,d0 
+.l:
+      mulu d0,d1
+      dbf d0,.l        
+       ifne vsync
+        lea $ffff8800.w,a6
+        moveq #13,d0
+.i:
+        move.b d0,$ffff8800
+        clr.b $ffff8802
+        dbf d0,.i
+       move.b #7,$ffff8800.w
+       move.b #%111100,$ffff8802.w ; no noise, channels on: cBA
+
+       move.b #0,$ffff8800.w
+       move.b #$e,$ffff8802.w
+
+       move.b #1,$ffff8800.w
+       move.b #$ef,$ffff8802.w
+
+       move.b #2,$ffff8800.w
+       move.b #$e,$ffff8802.w
+
+       move.b #3,$ffff8800.w
+       move.b #$ee,$ffff8802.w
+
+       move.b #8,$ffff8800.w
+       move.b #$10,$ffff8802.w
+       move.b #9,$ffff8800.w
+       move.b #$10,$ffff8802.w
+       move.b #10,$ffff8800.w
+       move.b #$f,$ffff8802.w
+
+       move.b #11,$ffff8800.w
+       move.b #$1e,$ffff8802.w
+       move.b #12,$ffff8800.w
+       move.b #$0,$ffff8802.w
+
+       move.b #13,$ffff8800.w
+       move.b #%1010,$ffff8802.w
+  
+;        move.w #$800,(a6)+
+;        move.b #7,(a6)    ; init PSG with volume max for nasty digit
+       endc
+      endc
 restart:
+
         ifeq withcls
         movea.l $0000044e.w,a1  ;screenbase
 ;        lea     -160-4(a1),a1
@@ -178,15 +228,6 @@ cls:
         dbra    d0,cls
         endc ; withcls
 
-      ifeq withsound
-;        move.b #8,$ffff8800.w ; volume A
-;        move.b #7,$ffff8802.w ;  max
-       ifne vsync
-        lea $ffff8800.w,a6
-        move.w #$800,(a6)+
-        move.b #7,(a6)    ; init PSG with volume max for nasty digit
-       endc
-      endc
 ; init screen with 1 pixel set
         movea.l $0000044e.w,a1  ;screenbase
   ; starting pattern
@@ -207,6 +248,20 @@ cls:
       else
         addq #1,d5   ; iterate through rules forward
       endc
+   ; how to gray code?
+   ; gray = i eor (i>>1)
+   ; move d5,d4
+   ; lsr #1,d4
+   ; eor d4,d5   ; of course would need to save d5 somewhere
+;    move.w generation.w,d5  ; #4
+    swap d5   ; get counter  ; #2    (instead of storing counter on low memory, using high word of d5 is 2 bytes smaller)
+    addq.w #1,d5  ; increment ; #2
+;    move.w d5,generation.w  ; #4
+    move.w d5,d4  ; copy counter ; #2
+    swap d5    ; store counter ; #2
+    move.w d4,d5   ; #2
+    lsr.w #1,d4
+    eor.w d4,d5
   ; not.w $ffff8240.w
 loop:
         ifeq debug
@@ -255,10 +310,17 @@ notset:
         ;move.b #8,$ffff8800.w ; volume 0
         ;move.b #0,$ffff8800.w ; tone 0
        ifeq vsync
-        move.b d7,$ffff8800.w ; psg register 0-9
-        move.b d3,$ffff8802.w ; do 'sound'
+;        move.b d7,$ffff8800.w ; psg register 0-9
+;        move.b d3,$ffff8802.w ; do 'sound'
        endc
-        move.b d3,(a6) ; do 'sound'
+;        move.b d3,(a6) ; do 'sound'
+        move.b #10,$ffff8800.w ; do 'sound'
+        move.b d3,$ffff8802.w ; do 'sound'
+      move.w d3,$ffff8242.w
+      not.w d3
+      move.w d3,$ffff8250.w
+       move.b #3,$ffff8800.w
+       move.l d5,$ffff8802.w
       endc
         lea 16(a0),a0       ; not 8, as we do 2 columns of 16 pix at once
         dbf d7,_10columns
@@ -292,7 +354,11 @@ exit:
 message:
         dc.b $1b,"b9"   ; text color: 9
         dc.b $1b,"E"    ; CLS
-        dc.b "Gunstick's Wolframmer ",$BD," ULM 01.05.2020"  ; 38 
+        dc.b $1b,"f"    ; cursor off
+message2:
+        dc.b 10,$1b,"j"
+        dc.b $1b,"H","Gunstick's Wolframmer ",$BD," ULM 01.05.2020"  ; 38 
+        dc.b $1b,"k"
         dc.b 0
       endc
         ifeq bootsector
@@ -303,6 +369,8 @@ b:
 
 ;        endpart
         bss
+; hack some low memory "registers" into the OEM region $200-$37F
+generation set $200    ; generation counter
 bss_start:                      ;here starts the bss
 ;        PART 'bss'
         ds.l    2*40+256
