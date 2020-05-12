@@ -3,19 +3,21 @@
 ;save it from a: to b:
 ; bug: need to preinit loop and jump in middle...
 
+  opt  O+ ; all optimizations on 
+
 def_version equ 10
-d0_for_mcp equ 0
-mcp_adr equ $00000500
 bootsector equ 10               ;0=code for boot (uses $60000-$60400)
 debug   set  10                  ;0=debug (+ generations in gen:)
 withcls set 10     ; 0=no clear screen
 ownscreen set 10   ; 0=use screen area in bss instead of default OS
-withsound set 0    ; 0=with sound, 10=no sound (needs 23 bytes)
+withsound set 0    ; 0=with sound, 10=no sound (needs 48 bytes)
+withcolors set 0    ; 0=with colors, 10=no colors (needs 14 bytes)
 vsync set 10   ; 10=fast, no sync ; 0=vsync  (vsync changes from "digit" to "chiptune")
 withmsg set 0 ; 0=with text, 10=no text
 supexec set 10 ; 0=Supexec(xbios); 10=Super(gemdos) (2 bytes less)
-rndinit set 10 ; 0=start with rule 30 ; 10=use whatever start pattern is in d0.b ; 10=start with 30   (2 bytes less)
-reverse set 10 ; 0 = reverse ; 10=incremantal  (same size)
+rndinit set 00 ; 0=start with rule 30 ; 10=use whatever start pattern is in d5.b (2 bytes less)
+gray set 10 ; 0 = play gray codes ; 10 = play binary (gray = 14 bytes more)
+iteration set 1 ; -1 = reverse ; 0 = no rule change ; 1=incremantal  (same size)
 
 ; principle:
 ; Screen is organized in 10 vertical stripes of 32 pixels
@@ -148,7 +150,7 @@ bootcode:
       ifeq withmsg
         move.w  #9,-(sp)  ; Cconws(message)
         trap    #1   ; GEMDOS
-        addq.w  #6,sp
+     ;   addq.w  #6,sp      ; who cares?
       endc
         ; set some colors.
         ; background: color 0
@@ -163,56 +165,24 @@ bootcode:
 ;        move.w #$0777,$ffff8250.w   ; pal 8   (left columns)   #6
      endc
 
-      ; move.b #30-1,d5    ; start with rule 30
      ifeq rndinit
-      moveq #30,d5    ; start with rule 30
+      ifeq gray
+        moveq #20-iteration,d5    ; start with rule 30 (30 is the value of the 20th gray code)
+        swap d5
+      else
+        moveq #30-iteration,d5
+      endc
      endc
       ifeq withsound
-;        move.b #8,$ffff8800.w ; volume A
-;        move.b #7,$ffff8802.w ;  max
-       moveq #-2,d0 
-.l:
-      mulu d0,d1
-      dbf d0,.l        
        ifne vsync
         lea $ffff8800.w,a6
+	lea 2(a6),a5
+	lea soundinit(pc),a4
         moveq #13,d0
 .i:
-        move.b d0,$ffff8800
-        clr.b $ffff8802
+        move.b d0,(a6)
+        move.b (a4)+,(a5)
         dbf d0,.i
-       move.b #7,$ffff8800.w
-       move.b #%111100,$ffff8802.w ; no noise, channels on: cBA
-
-       move.b #0,$ffff8800.w
-       move.b #$e,$ffff8802.w
-
-       move.b #1,$ffff8800.w
-       move.b #$ef,$ffff8802.w
-
-       move.b #2,$ffff8800.w
-       move.b #$e,$ffff8802.w
-
-       move.b #3,$ffff8800.w
-       move.b #$ee,$ffff8802.w
-
-       move.b #8,$ffff8800.w
-       move.b #$10,$ffff8802.w
-       move.b #9,$ffff8800.w
-       move.b #$10,$ffff8802.w
-       move.b #10,$ffff8800.w
-       move.b #$f,$ffff8802.w
-
-       move.b #11,$ffff8800.w
-       move.b #$1e,$ffff8802.w
-       move.b #12,$ffff8800.w
-       move.b #$0,$ffff8802.w
-
-       move.b #13,$ffff8800.w
-       move.b #%1010,$ffff8802.w
-  
-;        move.w #$800,(a6)+
-;        move.b #7,(a6)    ; init PSG with volume max for nasty digit
        endc
       endc
 restart:
@@ -230,40 +200,45 @@ cls:
 
 ; init screen with 1 pixel set
         movea.l $0000044e.w,a1  ;screenbase
-  ; starting pattern
-;        move.b #1,32000-80-160(a1)  ; pixel 1 line above so line below is for next generation
-        ;move.b #%10001,160*8+80(a1)  ; pixel 1 line above so line below is for next generation
-        move.w d5,160*8+86(a1)  ; just use the rule number as starting seed (and notice that it's ignored)
-;        move.b #1,160*8+80+2(a1)  ; pixel 1 line above so line below is for next generation
-;        move.b #1,160*8+80+4(a1)  ; pixel 1 line above so line below is for next generation
-;        move.b #1,160*8+80+6(a1)  ; pixel 1 line above so line below is for next generation
-  ; where we do our business
 ;        lea 32000-160*2+6(a1),a0  ; second last line, 6 bytes in: first 32bits value
         lea 160*8+6(a1),a0  ; 9th line, 6 bytes in: first 32bits value
     ;    move.w #30,d5   ; we do rule 30
     ;    move.w #%00111100,d5   ; we do mirrored rule 30
    ;     move.w #$ff,d5   ; always on
-      ifeq reverse
-          ; iterate through rules backward (use a dbf at end of loop for iteration)
-      else
-        addq #1,d5   ; iterate through rules forward
-      endc
-   ; how to gray code?
-   ; gray = i eor (i>>1)
-   ; move d5,d4
-   ; lsr #1,d4
-   ; eor d4,d5   ; of course would need to save d5 somewhere
-;    move.w generation.w,d5  ; #4
-    swap d5   ; get counter  ; #2    (instead of storing counter on low memory, using high word of d5 is 2 bytes smaller)
-    addq.w #1,d5  ; increment ; #2
-;    move.w d5,generation.w  ; #4
-    move.w d5,d4  ; copy counter ; #2
-    swap d5    ; store counter ; #2
-    move.w d4,d5   ; #2
-    lsr.w #1,d4
-    eor.w d4,d5
+	ifeq gray
+	  ; how to gray code?
+	  ; gray = i eor (i>>1)
+
+	  swap d5   ; get counter  ; #2    (instead of storing counter on low memory, using high word of d5 is 2 bytes smaller)
+	  ifne iteration
+	    addq.w #iteration,d5   ; #2 iterate through
+	  endc
+	  move.w d5,d4  ; copy counter ; #2
+	  swap d5    ; store counter ; #2
+	  move.w d4,d5   ; #2
+	  lsr.w #1,d4
+	  eor.w d4,d5
+	else
+	  ifne iteration
+	    addq.w #iteration,d5   ; #2 iterate through
+	  endc	
+	endc   ; gray
   ; not.w $ffff8240.w
+  ; starting pattern
+;        move.b #1,32000-80-160(a1)  ; pixel 1 line above so line below is for next generation
+        ;move.b #%10001,160*8+80(a1)  ; pixel 1 line above so line below is for next generation
+        move.l d5,160*8+16*4+6(a1)  ; just use the rule number as starting seed (and notice that it's ignored)
+;        bset.w #0,160*8+16*5+6(a1)  ; pixel aorund middle of screen
+;        bset.w #0,160*8+16*1+6(a1)  ; pixel 1 line above so line below is for next generation
+;        bset.w #0,160*8+6(a1)  ; pixel 1 line above so line below is for next generation
+;        move.b #1,160*8+80+4(a1)  ; pixel 1 line above so line below is for next generation
+;        move.b #1,160*8+80+6(a1)  ; pixel 1 line above so line below is for next generation
+  ; where we do our business
 loop:
+	
+      lea 32000(a1),a2
+      cmpa.l a2,a0
+      bgt.s restart   
         ifeq debug
         addq.w  #1,gen
         endc
@@ -280,15 +255,55 @@ loop:
 ; a1=pyhsbase
 ; let's first implement an "any rule" algorithm
 
+columns set 11    ; how many columns to do  (+1 because reasons)
+codeversion set 0 ; 0 = NEWCODE
 ; scan all bits of second last line
         move.l (a0),d0 ; get 32 bits at right edge
-        moveq #-2,d6   ; skip 2 bits at the start
+	moveq.l #0,d3
+  ifeq codeversion  ; NEWCODE
+        moveq #0,d6   ; fall through 1st loop 
+        moveq #(columns-1),d7   ; treat 10 columns
+	lea bof(pc),a4
+;	move.l (a4),a3   ; save memory as 1st write deletes it
+	bra.s initload
+_10columns:
+	moveq #30,d6
+_31bitloop:
+        add.l d1,d1   ; shift left
+        addx.l d0,d0  ; get bit in
+        addx.b d2,d2  ; accumulate 3 bits
+        andi.b #%111,d2   ; mask 3 bits
+        ; code idea by Scarab
+        btst d2,d5    ; check if matches rule
+        sne d4        ; set d4 to ff if true
+        add.b d4,d4   ; move d1 value into X
+        addx.l d3,d3
+	dbf d6,_31bitloop 
+	; do last bit (from new read), then wite and loop
+initload:
+        move.l 16(a0),d1 ; get next 32 bits too
+        add.l d1,d1   ; shift left
+        addx.l d0,d0  ; get bit in
+        addx.b d2,d2  ; accumulate 3 bits
+        andi.b #%111,d2   ; mask 3 bits
+        ; code idea by Scarab
+        btst d2,d5    ; check if matches rule
+        sne d4        ; set d4 to ff if true
+        add.b d4,d4   ; move d1 value into X
+        addx.l d3,d3
+	move.l d3,(a4)   ; 1st write goes nowhere
+	lea 160(a0),a4   ; next write goes here
+  endc ; NEWCODE
+  ifne codeversion  ; OLDCODE
+;        moveq #-2,d6   ; skip 2 bits at the start
+;        moveq #-1,d6   ; skip 1 bits at the start
+        moveq #0,d6   ; no skip
         ; we never set the outer bits, is this bad?
         ; get bit pattern of the 3 pixels above
-        moveq #9,d7   ; treat 10 columns
+        moveq #(columns-1),d7   ; treat 10 columns
 _10columns:
         move.l 16(a0),d1 ; get next 32 bits too
-        add.w #33,d6  ; treat 32 bits
+        add.w #32,d6  ; treat 32 bits
 _32bitloop:
         add.l d1,d1   ; shift left
         addx.l d0,d0  ; get bit in
@@ -296,37 +311,37 @@ _32bitloop:
         andi.b #%111,d2   ; mask 3 bits
         ; code idea by Scarab
         btst d2,d5    ; check if matches rule
-        sne d4        ; set d1 to ff if true
+        sne d4        ; set d4 to ff if true
         add.b d4,d4   ; move d1 value into X
-        ;andi #%11101111,ccr  ; clear X
-        ;btst.l d2,d5  ; check if matches rule
-        ;beq.s notset
-        ;ori  #%00010000,ccr  ; set X
-notset:
         addx.l d3,d3
         dbf d6,_32bitloop
         move.l d3,160(a0)   ; write line below
-      ifeq withsound
+  endc  ; OLDCODE
+
+        ifeq withsound
         ;move.b #8,$ffff8800.w ; volume 0
         ;move.b #0,$ffff8800.w ; tone 0
-       ifeq vsync
+          ifeq vsync
 ;        move.b d7,$ffff8800.w ; psg register 0-9
 ;        move.b d3,$ffff8802.w ; do 'sound'
-       endc
+          endc
 ;        move.b d3,(a6) ; do 'sound'
-        move.b #10,$ffff8800.w ; do 'sound'
-        move.b d3,$ffff8802.w ; do 'sound'
-      move.w d3,$ffff8242.w
-      not.w d3
-      move.w d3,$ffff8250.w
-       move.b #3,$ffff8800.w
-       move.l d5,$ffff8802.w
-      endc
+          move.b #10,(a6) ; do 'sound'
+          move.b d3,(a5) ; do 'sound'
+          move.b #3,(a6)
+          move.l d5,(a5)  ;goes from non-pleasing sound to annoying after 256 steps
+        endc
+        ifeq withcolors
+          move.w d5,$ffff8240.w  
+          move.w d3,$ffff8242.w
+          add.w d3,d3
+          move.w d3,$ffff8250.w
+        endc
         lea 16(a0),a0       ; not 8, as we do 2 columns of 16 pix at once
         dbf d7,_10columns
-;  move.w #%11001111,4(a0)
-        ; add.l #160,a0  ; next line
-
+        
+        lea 160-(columns*16)(a0),a0  ; next line
+;	lea -(columns*16)(a4),a0   ; this makes interesting forest effects.
         ; vsync
         ifeq vsync
         movem.l d0-d7/a0-a6,-(sp)
@@ -336,15 +351,8 @@ notset:
         movem.l (sp)+,d0-d7/a0-a6
         endc
 
-      lea 32000(a1),a2
-      cmpa.l a2,a0
-    ifeq reverse
-      dble d5,restart    ; #4
-    else
-      bgt.s restart    ; #2
-    endc
         cmpi.b  #$39,$fffffc02.w
-        bne.s     loop
+        bne     loop
 ;        bra.s     loop            ; AND HERE IS THE BIG LOOP
 
 
@@ -356,9 +364,7 @@ message:
         dc.b $1b,"E"    ; CLS
         dc.b $1b,"f"    ; cursor off
 message2:
-        dc.b 10,$1b,"j"
-        dc.b $1b,"H","Gunstick's Wolframmer ",$BD," ULM 01.05.2020"  ; 38 
-        dc.b $1b,"k"
+        dc.b $1b,"H","Gunstick's Wolframmer ",$BD," ULM 12.05.2020"  ; 38 
         dc.b 0
       endc
         ifeq bootsector
@@ -366,11 +372,21 @@ checksum:
         ds.w  1
 b:
         endc
-
+	ifeq withsound
+soundinit:
+	;     13,   12, 11, 10,   9,  8  , 7
+	;     E     freqE   Vc   Vb   Va   Mix
+	dc.b  %1010, 0, $2e, $f, $10, $10, %111100
+	;      6,  5,  4,  3,  2,  1,  0
+	;     N   freqC  freqB   freqA
+	dc.b   0,  0,  0,$ee, $e,$ef, $e 
+	endc
 ;        endpart
         bss
 ; hack some low memory "registers" into the OEM region $200-$37F
 generation set $200    ; generation counter
+bof:
+	dc.l 0
 bss_start:                      ;here starts the bss
 ;        PART 'bss'
         ds.l    2*40+256

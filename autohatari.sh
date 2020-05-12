@@ -5,6 +5,7 @@ then
   exit 1
 fi
 filebase="${1%.*}"
+export SDL_VIDEO_WINDOW_POS="0,0"
 while true
 do
   if [ "${filebase}.s" -nt "${filebase}.tos" ]
@@ -15,9 +16,11 @@ do
     then
       ls -l ${filebase}.tos
       hatari ${filebase}.tos &
+    else
+      sleep 10
     fi
     sleep 1
-    WID=$(xdotool search --onlyvisible --name hatari)
+    WID=$(xdotool search --onlyvisible --name '^hatari')
     xdotool windowmove $WID 0 0
   fi;
   sleep 1 ;
