@@ -15,9 +15,10 @@ withcolors set 0    ; 0=with colors, 10=no colors (needs 14 bytes)
 vsync set 10   ; 10=fast, no sync ; 0=vsync  (vsync changes from "digit" to "chiptune")
 withmsg set 0 ; 0=with text, 10=no text
 supexec set 10 ; 0=Supexec(xbios); 10=Super(gemdos) (2 bytes less)
-rndinit set 00 ; 0=start with rule 30 ; 10=use whatever start pattern is in d5.b (2 bytes less)
-gray set 10 ; 0 = play gray codes ; 10 = play binary (gray = 14 bytes more)
+rndinit set 00 ; 0=start with fixed rule ; 10=use whatever start pattern is in d3.b (2 bytes less)
+gray set 0 ; 0 = play gray codes ; 10 = play binary (gray = 14 bytes more)
 iteration set 1 ; -1 = reverse ; 0 = no rule change ; 1=incremantal  (same size)
+prequel set 5 ; how many rules to play before rule30 (1=play rule30 immediately)
 
 ; principle:
 ; Screen is organized in 10 vertical stripes of 32 pixels
@@ -156,7 +157,7 @@ bootcode:
         ; background: color 0
         ; left part of columns: color 9
         ; right part of columns: color 1
-        ; text color: color 15
+        ; text color: color 9
      ifeq withmsg
         move.l #$00000777,$ffff8240.w   ; pal 0-1   (background,right columns)    #8
         move.l #$07770077,$ffff8250.w   ; pal 8-9   (left columns,ESC-b-9 text)   #8
@@ -167,10 +168,12 @@ bootcode:
 
      ifeq rndinit
       ifeq gray
-        moveq #20-iteration,d5    ; start with rule 30 (30 is the value of the 20th gray code)
-        swap d5
+        moveq #20-iteration*prequel,d3    ; start with rule 30 (30 is the value of the 20th gray code)
+        ;moveq #0-iteration*prequel,d3    ; start with gray code 0
+        swap d3
       else
-        moveq #30-iteration,d5
+        moveq #30-iteration*prequel,d3
+        ;moveq #0-iteration*prequel,d3
       endc
      endc
       ifeq withsound
@@ -186,6 +189,10 @@ bootcode:
        endc
       endc
 restart:
+;	move.b #11,(a6) ; sound test envelope
+;	move.b (a6),d0
+;	addq.b #1,d0
+;	move.b d0,(a5)
 
         ifeq withcls
         movea.l $0000044e.w,a1  ;screenbase
@@ -202,33 +209,33 @@ cls:
         movea.l $0000044e.w,a1  ;screenbase
 ;        lea 32000-160*2+6(a1),a0  ; second last line, 6 bytes in: first 32bits value
         lea 160*8+6(a1),a0  ; 9th line, 6 bytes in: first 32bits value
-    ;    move.w #30,d5   ; we do rule 30
-    ;    move.w #%00111100,d5   ; we do mirrored rule 30
-   ;     move.w #$ff,d5   ; always on
+    ;    move.w #30,d3   ; we do rule 30
+    ;    move.w #%00111100,d3   ; we do mirrored rule 30
+   ;     move.w #$ff,d3   ; always on
 	ifeq gray
 	  ; how to gray code?
 	  ; gray = i eor (i>>1)
 
-	  swap d5   ; get counter  ; #2    (instead of storing counter on low memory, using high word of d5 is 2 bytes smaller)
+	  swap d3   ; get counter  ; #2    (instead of storing counter on low memory, using high word of d3 is 2 bytes smaller)
 	  ifne iteration
-	    addq.w #iteration,d5   ; #2 iterate through
+	    addq.w #iteration,d3   ; #2 iterate through
 	  endc
-	  move.w d5,d4  ; copy counter ; #2
-	  swap d5    ; store counter ; #2
-	  move.w d4,d5   ; #2
+	  move.w d3,d4  ; copy counter ; #2
+	  swap d3    ; store counter ; #2
+	  move.w d4,d3   ; #2
 	  lsr.w #1,d4
-	  eor.w d4,d5
+	  eor.w d4,d3
 	else
 	  ifne iteration
-	    addq.w #iteration,d5   ; #2 iterate through
+	    addq.w #iteration,d3   ; #2 iterate through
 	  endc	
 	endc   ; gray
   ; not.w $ffff8240.w
   ; starting pattern
 ;        move.b #1,32000-80-160(a1)  ; pixel 1 line above so line below is for next generation
         ;move.b #%10001,160*8+80(a1)  ; pixel 1 line above so line below is for next generation
-        move.l d5,160*8+16*4+6(a1)  ; just use the rule number as starting seed (and notice that it's ignored)
-;        bset.w #0,160*8+16*5+6(a1)  ; pixel aorund middle of screen
+;        move.w d3,160*8+16*4+6(a1)  ; just use the rule number as starting seed 
+        eor.l d3,160*8+16*4+6(a1)  ; pixel around middle of screen
 ;        bset.w #0,160*8+16*1+6(a1)  ; pixel 1 line above so line below is for next generation
 ;        bset.w #0,160*8+6(a1)  ; pixel 1 line above so line below is for next generation
 ;        move.b #1,160*8+80+4(a1)  ; pixel 1 line above so line below is for next generation
@@ -245,21 +252,20 @@ loop:
 ; d0=current value
 ; d1=value to the right
 ; d2=shifted out bits (masked to 3)
-; d3=calculated output
+; d5=calculated output
 ; d4=%111 (mask for d2)
 ; d4=temp register
-; d5=rule number, i.e. 30 ($1E, %00011110)
+; d3=rule number, i.e. 30 ($1E, %00011110)
 ; d6=loop counter per column (32)
 ; d7=loop counter for line (10)
 ; a0=beginning of line+6, so first 32bit value is at 0(a0), next at 8(a0) until 72(a0)
 ; a1=pyhsbase
 ; let's first implement an "any rule" algorithm
-
 columns set 11    ; how many columns to do  (+1 because reasons)
 codeversion set 0 ; 0 = NEWCODE
 ; scan all bits of second last line
         move.l (a0),d0 ; get 32 bits at right edge
-	moveq.l #0,d3
+	moveq.l #0,d5
   ifeq codeversion  ; NEWCODE
         moveq #0,d6   ; fall through 1st loop 
         moveq #(columns-1),d7   ; treat 10 columns
@@ -269,29 +275,31 @@ codeversion set 0 ; 0 = NEWCODE
 _10columns:
 	moveq #30,d6
 _31bitloop:
-        add.l d1,d1   ; shift left
-        addx.l d0,d0  ; get bit in
-        addx.b d2,d2  ; accumulate 3 bits
-        andi.b #%111,d2   ; mask 3 bits
-        ; code idea by Scarab
-        btst d2,d5    ; check if matches rule
-        sne d4        ; set d4 to ff if true
-        add.b d4,d4   ; move d1 value into X
-        addx.l d3,d3
+	bsr.s dorule
+;        add.l d1,d1     ; #2 shift left
+;        addx.l d0,d0    ; #2 get bit in
+;        addx.b d2,d2    ; #2 accumulate 3 bits
+;        andi.b #%111,d2 ; #4 mask 3 bits
+;        ; code idea by Scarab
+;        btst d2,d3      ; #2 check if matches rule
+;        sne d4          ; #2 set d4 to ff if true
+;        add.b d4,d4     ; #2 move d1 value into X
+;        addx.l d5,d5    ; #2
 	dbf d6,_31bitloop 
 	; do last bit (from new read), then wite and loop
 initload:
         move.l 16(a0),d1 ; get next 32 bits too
-        add.l d1,d1   ; shift left
-        addx.l d0,d0  ; get bit in
-        addx.b d2,d2  ; accumulate 3 bits
-        andi.b #%111,d2   ; mask 3 bits
-        ; code idea by Scarab
-        btst d2,d5    ; check if matches rule
-        sne d4        ; set d4 to ff if true
-        add.b d4,d4   ; move d1 value into X
-        addx.l d3,d3
-	move.l d3,(a4)   ; 1st write goes nowhere
+	bsr.s dorule
+;        add.l d1,d1     ; #2 shift left
+;        addx.l d0,d0    ; #2 get bit in
+;        addx.b d2,d2    ; #2 accumulate 3 bits
+;        andi.b #%111,d2 ; #4 mask 3 bits
+;        ; code idea by Scarab
+;        btst d2,d3      ; #2 check if matches rule
+;        sne d4          ; #2 set d4 to ff if true
+;        add.b d4,d4     ; #2 move d1 value into X
+;        addx.l d5,d5    ; #2 add to output
+	move.l d5,(a4)   ; 1st write goes nowhere
 	lea 160(a0),a4   ; next write goes here
   endc ; NEWCODE
   ifne codeversion  ; OLDCODE
@@ -310,33 +318,39 @@ _32bitloop:
         addx.b d2,d2  ; accumulate 3 bits
         andi.b #%111,d2   ; mask 3 bits
         ; code idea by Scarab
-        btst d2,d5    ; check if matches rule
+        btst d2,d3    ; check if matches rule
         sne d4        ; set d4 to ff if true
         add.b d4,d4   ; move d1 value into X
-        addx.l d3,d3
+        addx.l d5,d5  ; add to output
         dbf d6,_32bitloop
-        move.l d3,160(a0)   ; write line below
+        move.l d5,160(a0)   ; write line below
   endc  ; OLDCODE
-
         ifeq withsound
         ;move.b #8,$ffff8800.w ; volume 0
         ;move.b #0,$ffff8800.w ; tone 0
           ifeq vsync
 ;        move.b d7,$ffff8800.w ; psg register 0-9
-;        move.b d3,$ffff8802.w ; do 'sound'
+;        move.b d5,$ffff8802.w ; do 'sound'
           endc
-;        move.b d3,(a6) ; do 'sound'
+;        move.b d5,(a6) ; do 'sound'
           move.b #10,(a6) ; do 'sound'
-          move.b d3,(a5) ; do 'sound'
+;	btst #0,d3
+;	bne.s .nos
+;	  andi.b #$7,d5  ; don't be too loud
+          move.b d5,(a5) ; do 'sound'
           move.b #3,(a6)
-          move.l d5,(a5)  ;goes from non-pleasing sound to annoying after 256 steps
+          move.l d3,(a5)  ;goes from non-pleasing sound to annoying after 256 steps
+;.nos:
         endc
         ifeq withcolors
-          move.w d5,$ffff8240.w  
-          move.w d3,$ffff8242.w
-          add.w d3,d3
-          move.w d3,$ffff8250.w
+	andi.w #%001100110011,d5
+;          move.w d3,$ffff8240.w  
+;          move.w d5,$ffff8242.w
+	  movem.w d3/d5,$ffff8240.w
+          add.w d5,d5
+          move.w d5,$ffff8250.w
         endc
+
         lea 16(a0),a0       ; not 8, as we do 2 columns of 16 pix at once
         dbf d7,_10columns
         
@@ -355,7 +369,17 @@ _32bitloop:
         bne     loop
 ;        bra.s     loop            ; AND HERE IS THE BIG LOOP
 
-
+dorule:
+        add.l d1,d1     ; #2 shift left
+        addx.l d0,d0    ; #2 get bit in
+        addx.b d2,d2    ; #2 accumulate 3 bits
+        andi.b #%111,d2 ; #4 mask 3 bits
+        ; code idea by Scarab
+        btst d2,d3      ; #2 check if matches rule
+        sne d4          ; #2 set d4 to ff if true
+        add.b d4,d4     ; #2 move d1 value into X
+        addx.l d5,d5    ; #2 add to output
+	; fun, reuse the rts of the program for the subroutine
 exit:
         rts     ; yeah, save 2 bytes, exit with bombs or something... 
       ifeq withmsg
@@ -364,7 +388,7 @@ message:
         dc.b $1b,"E"    ; CLS
         dc.b $1b,"f"    ; cursor off
 message2:
-        dc.b $1b,"H","Gunstick's Wolframmer ",$BD," ULM 12.05.2020"  ; 38 
+        dc.b "Gunstick's Wolframmer ",$BD,"ULM 13.5.2020"  ; 38 
         dc.b 0
       endc
         ifeq bootsector
@@ -377,9 +401,15 @@ soundinit:
 	;     13,   12, 11, 10,   9,  8  , 7
 	;     E     freqE   Vc   Vb   Va   Mix
 	dc.b  %1010, 0, $2e, $f, $10, $10, %111100
+;	dc.b  %1010, 0, $2e+72, $f, $10, $10, %111100
 	;      6,  5,  4,  3,  2,  1,  0
 	;     N   freqC  freqB   freqA
 	dc.b   0,  0,  0,$ee, $e,$ef, $e 
+;	dc.b   0,  0,  0, $ee-5,$e,  $ef, $e 
+        ;     13,   12, 11, 10,   9,  8  , 7
+        ;     E     freqE   Vc   Vb   Va   Mix
+        ;      6,  5,  4,  3,  2,  1,  0
+
 	endc
 ;        endpart
         bss
